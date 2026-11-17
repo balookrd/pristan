@@ -1,9 +1,9 @@
 name: CI
 
 on:
+  # Every push, main included: work lands on main directly, and the Nightly Release build
+  # runs the tests without PostgreSQL, so the Postgres-backed tests run only here.
   push:
-    branches-ignore:
-      - main
   pull_request:
   workflow_dispatch:
 
