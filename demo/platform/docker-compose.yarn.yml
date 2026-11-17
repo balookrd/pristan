@@ -27,6 +27,10 @@ services:
       - ../artel/cluster-1/capacity-scheduler.xml:/opt/hadoop/etc/hadoop/capacity-scheduler.xml:ro
       - ../artel/cluster-1/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
       - ../artel/hadoop-common/entrypoint.sh:/entrypoint.sh:ro
+    # apache/hadoop declares VOLUME /data, which leaves an anonymous volume behind on every
+    # recreation; the ResourceManager keeps no state there (no RM recovery on the stand)
+    tmpfs:
+      - /data
     entrypoint: ["/entrypoint.sh"]
     depends_on:
       kdc:
@@ -56,6 +60,10 @@ services:
       - ../artel/cluster-2/capacity-scheduler.xml:/opt/hadoop/etc/hadoop/capacity-scheduler.xml:ro
       - ../artel/cluster-2/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
       - ../artel/hadoop-common/entrypoint.sh:/entrypoint.sh:ro
+    # apache/hadoop declares VOLUME /data, which leaves an anonymous volume behind on every
+    # recreation; the ResourceManager keeps no state there (no RM recovery on the stand)
+    tmpfs:
+      - /data
     entrypoint: ["/entrypoint.sh"]
     depends_on:
       kdc:
