@@ -3,10 +3,6 @@ name: pristan-shared-yarn
 include:
   - path: ../infra/docker-compose.infra.yml
 
-volumes:
-  yarn-demo-data:
-    name: yarn-demo-data
-
 services:
   yarn-demo-rm-1:
     image: apache/hadoop:3.4.0

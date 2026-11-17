@@ -4,8 +4,8 @@ include:
   - path: ../platform/docker-compose.core.yml
 
 volumes:
-  spark-demo-data:
-    name: spark-demo-data
+  iskra-demo-data:
+    name: iskra-demo-data
 
 services:
   # ==========================================
@@ -166,7 +166,7 @@ services:
       - JAVA_TOOL_OPTIONS=-Djava.security.krb5.conf=/etc/krb5_shared/krb5.conf
     volumes:
       - ./application-demo.yml:/app/config/application.yml:ro
-      - spark-demo-data:/app/data
+      - iskra-demo-data:/app/data
       - demo-shared-krb5:/etc/krb5_shared:ro
       - demo-shared-keytabs:/etc/security/keytabs:ro
     networks:

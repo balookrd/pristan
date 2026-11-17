@@ -24,7 +24,7 @@ services:
       - ./application-demo.yml:/app/config/application.yml:ro
       - demo-shared-krb5:/shared-krb5:ro
       - demo-shared-keytabs:/etc/security/keytabs:ro
-      - yarn-demo-data:/app/data
+      - artel-demo-data:/app/data
     depends_on:
       kdc:
         condition: service_healthy
@@ -35,3 +35,7 @@ services:
       yarn-demo-rm-2:
         condition: service_started
     restart: unless-stopped
+
+volumes:
+  artel-demo-data:
+    name: artel-demo-data
