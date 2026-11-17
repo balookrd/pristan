@@ -14,7 +14,6 @@ services:
   streamer-dc1-01:
     environment: &streamer
       ORCHESTRATOR_GRPC_ADDRESSES: "orchestrator:50050,orchestrator-2:50050"
-      PAROM_AGENT_SECRET: "${DEMO_AGENT_SECRET:-demo-replicator-agent-secret-0123456789}"
 
   streamer-dc1-02:
     environment: *streamer

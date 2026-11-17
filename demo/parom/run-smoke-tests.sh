@@ -170,6 +170,25 @@ check_tcp_port "$HS2_2_HOST" "$HS2_2_PORT" "HiveServer2 DC2 (Thrift HS2)" || tru
 check_tcp_port "$AGENT1_HOST" "$AGENT1_PORT" "Parom Agent DC1 (gRPC)" || true
 check_tcp_port "$AGENT2_HOST" "$AGENT2_PORT" "Parom Agent DC2 (gRPC)" || true
 
+# На свежем стенде NameNode выходит из safe mode и создает /warehouse примерно через минуту
+# после старта контейнера; до этого HiveServer2 не может создать каталог базы
+for dc in 1 2; do
+    HDFS_READY=0
+    for _ in $(seq 1 60); do
+        if "hdfs${dc}_cmd" "dfsadmin -safemode get" 2>/dev/null | grep -q "Safe mode is OFF" \
+            && "hdfs${dc}_cmd" "dfs -test -d /warehouse" >/dev/null 2>&1; then
+            HDFS_READY=1
+            break
+        fi
+        sleep 3
+    done
+    if [ "$HDFS_READY" -ne 1 ]; then
+        printf "%b❌ HDFS DC%s не готов за 180 с: safe mode не снят или нет каталога /warehouse%b\n" "$RED" "$dc" "$NC"
+        exit 1
+    fi
+    printf "%b  ✓ HDFS DC%s вышел из safe mode, каталог /warehouse создан%b\n" "$GREEN" "$dc" "$NC"
+done
+
 # Авторизация администратора
 printf "\n%b==> Авторизация в платформе под учетной записью администратора (admin_user)...%b\n" "$BLUE" "$NC"
 LOGIN_RESP=$(curl -sf -X POST "${ORCHESTRATOR_URL}/api/v1/auth/login" \
@@ -522,7 +541,11 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "inotify" ]; then
     printf "\n%b==> [7/8] HDFS Inotify Streaming: проверка распределенного лизинга и изоляции...%b\n" "$BLUE" "$NC"
 
     # 1. Проверка мульти-ЦОД лизинга стримеров
-    LEASE_RESP=$(curl -sf -H "$AUTH_HEADER" "${ORCHESTRATOR_URL}/api/v1/streaming/lease/all")
+    LEASE_RESP=$(curl -sf -H "$AUTH_HEADER" "${ORCHESTRATOR_URL}/api/v1/streaming/lease/all" || true)
+    if ! echo "$LEASE_RESP" | grep -q "ACTIVE"; then
+        printf "%b❌ Ни один стример не держит аренду (нет роли ACTIVE). Ответ: %s%b\n" "$RED" "${LEASE_RESP:-<нет ответа>}" "$NC"
+        exit 1
+    fi
     echo "  ✓ Статус распределенной аренды стримеров: ${LEASE_RESP}"
 
     # 2. Проверка изоляции: устаревший REST-эндпоинт /tasks/claim отключен (переведен на gRPC Control Plane).
@@ -542,29 +565,100 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "inotify" ]; then
 
     # 3. Проверка распознавания коммита из staging через Rename
     printf "\n%b==> [8/8] Проверка распознавания коммита (фильтрация staging ➔ коммит по RenameEvent)...%b\n" "$BLUE" "$NC"
-    STREAM_TEST_DIR="/warehouse/streaming_retail_staging"
-    STREAM_TARGET_DIR="/warehouse/streaming_retail_target"
-    
-    # Создаем директории в HDFS (внутри /warehouse, где у всех полные права)
-    docker exec hdfs-cluster-1 bash -c "kinit -kt /shared/keytabs/hive.keytab hive/hive-server@COMPANY.LOCAL >/dev/null 2>&1 && \
-      hdfs dfs -mkdir -p ${STREAM_TEST_DIR}"
-    docker exec hdfs-cluster-2 bash -c "kinit -kt /shared/keytabs/hive.keytab hive/hive-server-2@COMPANY.LOCAL >/dev/null 2>&1 && \
-      hdfs dfs -mkdir -p ${STREAM_TARGET_DIR}"
-    
-    # Регистрация потоковой задачи для каталога
-    curl -sf -X POST "${ORCHESTRATOR_URL}/api/v1/jobs" \
+    STREAM_SRC_DIR="/warehouse/streaming_retail_source"
+    STREAM_DST_DIR="/warehouse/streaming_retail_target"
+    STREAM_SRC_URI="hdfs://hdfs-cluster-1:9000${STREAM_SRC_DIR}"
+    STREAM_DST_URI="hdfs://hdfs-cluster-2:9000${STREAM_DST_DIR}"
+
+    # Потоковые задачи прошлых прогонов на тех же каталогах удаляются: иначе их стример
+    # переносит файлы этого прогона и проверка не отличит одну задачу от другой
+    for j in $(curl -sf -H "$AUTH_HEADER" "${ORCHESTRATOR_URL}/api/v1/jobs?size=500" | grep -o '"id":"[^"]*","source_path":"[^"]*streaming_retail_[^"]*' | cut -d'"' -f4 || true); do
+        curl -sf -X DELETE -H "$AUTH_HEADER" "${ORCHESTRATOR_URL}/api/v1/jobs/$j" > /dev/null 2>&1 || true
+    done
+
+    hdfs1_cmd "dfs -mkdir -p ${STREAM_SRC_DIR}/committed"
+    hdfs2_cmd "dfs -mkdir -p ${STREAM_DST_DIR}"
+
+    # Задача в режиме STREAMING_INOTIFY: файлы переносит стример по журналу правок NameNode DC1
+    STREAM_RESP=$(curl -s -X POST "${ORCHESTRATOR_URL}/api/v1/jobs" \
       -H "$AUTH_HEADER" \
       -H "Content-Type: application/json" \
       -d "{
-        \"source_path\": \"${STREAM_TEST_DIR}\",
-        \"target_path\": \"${STREAM_TARGET_DIR}\",
+        \"source_path\": \"${STREAM_SRC_URI}\",
+        \"target_path\": \"${STREAM_DST_URI}\",
         \"source_cluster_id\": \"dc1\",
         \"target_cluster_id\": \"dc2\",
-        \"job_type\": \"STREAMING\",
+        \"sync_mode\": \"STREAMING_INOTIFY\",
         \"run_as_service_account\": true
-      }" > /dev/null
-    echo "  ✓ Потоковая Inotify задача зарегистрирована в Оркестраторе"
-    printf "%b  ✓ [Inotify Streaming OK] Staged-пути (.staging, _temporary) отфильтрованы, коммит по RenameEvent подтвержден!%b\n" "$GREEN" "$NC"
+      }")
+    STREAM_JOB_ID=$(json_field id "$STREAM_RESP")
+    STREAM_JOB_MODE=$(json_field sync_mode "$STREAM_RESP")
+    if [ -z "$STREAM_JOB_ID" ] || [ "$STREAM_JOB_MODE" != "STREAMING_INOTIFY" ]; then
+        printf "%b❌ Потоковая задача не создана (sync_mode=%s). Ответ API: %s%b\n" "$RED" "${STREAM_JOB_MODE:-<нет>}" "$STREAM_RESP" "$NC"
+        exit 1
+    fi
+    echo "  ✓ Потоковая задача STREAMING_INOTIFY создана: ID=${STREAM_JOB_ID}"
+
+    # Список файлов каталога приемника (рекурсивно, пути относительно каталога)
+    stream_dst_files() {
+        hdfs2_cmd "dfs -ls -R ${STREAM_DST_DIR} 2>/dev/null" | awk '$1 !~ /^d/ && NF >= 8 {print $NF}' \
+            | sed "s|^.*${STREAM_DST_DIR}/||" | sort | paste -sd, - || true
+    }
+    # Ждет появления файла на приемнике: wait_dst_file <относительный путь> <секунд>
+    wait_dst_file() {
+        local waited=0
+        while [ "$waited" -lt "$2" ]; do
+            case ",$(stream_dst_files)," in *",$1,"*) return 0 ;; esac
+            sleep 5
+            waited=$((waited + 5))
+        done
+        return 1
+    }
+
+    # Пробный файл в постоянном каталоге: стример подхватывает задачу не мгновенно, поэтому
+    # файл перезаписывается, пока он не появится на приемнике
+    PROBE_OK=0
+    for attempt in $(seq 1 6); do
+        hdfs1_cmd "dfs -rm -f -skipTrash ${STREAM_SRC_DIR}/probe.csv >/dev/null 2>&1; echo probe-${attempt} | hdfs dfs -put -f - ${STREAM_SRC_DIR}/probe.csv"
+        if wait_dst_file probe.csv 30; then
+            PROBE_OK=1
+            break
+        fi
+    done
+    if [ "$PROBE_OK" -ne 1 ]; then
+        printf "%b❌ Файл probe.csv не доехал до DC2 по inotify за 180 с. Приемник: [%s]. Задача: %s%b\n" "$RED" "$(stream_dst_files)" \
+            "$(curl -s -H "$AUTH_HEADER" "${ORCHESTRATOR_URL}/api/v1/jobs/${STREAM_JOB_ID}")" "$NC"
+        exit 1
+    fi
+    echo "  ✓ Пробный файл перенесен стримером на DC2"
+
+    # Запись в .staging: файл не должен попасть на приемник
+    hdfs1_cmd "dfs -mkdir -p ${STREAM_SRC_DIR}/.staging && echo order-1001,42.50 | hdfs dfs -put -f - ${STREAM_SRC_DIR}/.staging/part-00000.csv"
+    sleep 20
+    if stream_dst_files | grep -q "staging"; then
+        printf "%b❌ Staging-файл попал на приемник: [%s]%b\n" "$RED" "$(stream_dst_files)" "$NC"
+        exit 1
+    fi
+    echo "  ✓ Файл в .staging на приемник не перенесен"
+
+    # Коммит переименованием из .staging в постоянный каталог
+    hdfs1_cmd "dfs -mv ${STREAM_SRC_DIR}/.staging/part-00000.csv ${STREAM_SRC_DIR}/committed/part-00000.csv"
+    if ! wait_dst_file committed/part-00000.csv 90; then
+        printf "%b❌ Файл после коммита (RenameEvent) не доехал до DC2 за 90 с. Приемник: [%s]%b\n" "$RED" "$(stream_dst_files)" "$NC"
+        exit 1
+    fi
+    COMMITTED_DATA=$(hdfs2_cmd "dfs -cat ${STREAM_DST_DIR}/committed/part-00000.csv" 2>/dev/null | tr -d '\r')
+    if [ "$COMMITTED_DATA" != "order-1001,42.50" ]; then
+        printf "%b❌ Содержимое файла на DC2 не совпадает с источником: '%s'%b\n" "$RED" "$COMMITTED_DATA" "$NC"
+        exit 1
+    fi
+    if stream_dst_files | grep -q "staging"; then
+        printf "%b❌ После коммита на приемнике остался staging-путь: [%s]%b\n" "$RED" "$(stream_dst_files)" "$NC"
+        exit 1
+    fi
+    printf "%b  ✓ [Inotify Streaming OK] Staging-файл отфильтрован, после RenameEvent файл доехал на DC2 с тем же содержимым%b\n" "$GREEN" "$NC"
+
+    curl -sf -X DELETE -H "$AUTH_HEADER" "${ORCHESTRATOR_URL}/api/v1/jobs/${STREAM_JOB_ID}" > /dev/null 2>&1 || true
 fi
 
 echo ""
@@ -579,6 +673,6 @@ echo "   5. [Удаление партиции] Удаление партици�
 echo "   6. [Удаление таблицы] Удаление временной таблицы 'staging_events_temporary' и согласование с DR кластером"
 echo "   7. [Схема 2] 'inventory_logistics_dw': создание таблицы 'warehouse_stock_partitioned' (2 партиции) и репликация"
 echo "   8. [Inotify Streaming HA] Распределенная аренда стримеров и отключенный REST-эндпоинт tasks/claim (HTTP 404)"
-echo "   9. [Commit Rename] Фильтрация staging-путей и фиксация по RenameEvent"
+echo "   9. [Commit Rename] Задача STREAMING_INOTIFY: staging-файл не перенесен, после rename файл доехал на DC2"
 echo "========================================================================"
 exit 0

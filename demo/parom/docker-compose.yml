@@ -179,6 +179,7 @@ services:
     restart: unless-stopped
     environment:
       AGENT_ID: "streamer-dc1-01"
+      PAROM_AGENT_SECRET: "${DEMO_AGENT_SECRET:-demo-replicator-agent-secret-0123456789}"
       AGENT_CLUSTER_ID: "dc1"
       AGENT_MODE: "streamer"
       HADOOP_STREAMING_ENABLED: "true"
@@ -210,6 +211,7 @@ services:
     restart: unless-stopped
     environment:
       AGENT_ID: "streamer-dc1-02"
+      PAROM_AGENT_SECRET: "${DEMO_AGENT_SECRET:-demo-replicator-agent-secret-0123456789}"
       AGENT_CLUSTER_ID: "dc1"
       AGENT_MODE: "streamer"
       HADOOP_STREAMING_ENABLED: "true"
@@ -241,6 +243,7 @@ services:
     restart: unless-stopped
     environment:
       AGENT_ID: "streamer-dc2-01"
+      PAROM_AGENT_SECRET: "${DEMO_AGENT_SECRET:-demo-replicator-agent-secret-0123456789}"
       AGENT_CLUSTER_ID: "dc2"
       AGENT_MODE: "streamer"
       HADOOP_STREAMING_ENABLED: "true"
