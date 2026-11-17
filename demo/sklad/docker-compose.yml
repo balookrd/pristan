@@ -20,7 +20,7 @@ services:
       - ./application-demo.yml:/app/config/application.yml:ro
       - demo-shared-keytabs:/etc/security/keytabs:ro
       - demo-shared-krb5:/etc/krb5_shared:ro
-      - hdfs-demo-data:/app/data
+      - sklad-demo-data:/app/data
     ports:
       - "8002:8000"
     depends_on:
@@ -34,3 +34,7 @@ services:
         condition: service_started
     networks:
       - demo-platform-net
+
+volumes:
+  sklad-demo-data:
+    name: sklad-demo-data

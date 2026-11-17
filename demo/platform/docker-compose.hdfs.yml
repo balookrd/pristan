@@ -3,9 +3,15 @@ name: pristan-shared-hdfs
 include:
   - path: ../infra/docker-compose.infra.yml
 
+# Metadata of the NameNode and blocks of the DataNode (/data/dfs). The named volumes keep HDFS
+# consistent with the metastore volumes after `docker compose down` / `up`; a clean HDFS
+# needs `docker compose down -v`. Mounting /data also replaces the anonymous volume
+# declared by `VOLUME /data` in the apache/hadoop base image.
 volumes:
-  hdfs-demo-data:
-    name: hdfs-demo-data
+  hdfs-cluster-1-data:
+    name: hdfs-cluster-1-data
+  hdfs-cluster-2-data:
+    name: hdfs-cluster-2-data
 
 services:
   hdfs-cluster-1:
@@ -19,6 +25,7 @@ services:
       CLUSTER_NAME: "Production DataLake"
     volumes:
       - ../sklad/hadoop/entrypoint.sh:/entrypoint.sh:ro
+      - hdfs-cluster-1-data:/data
       - demo-shared-keytabs:/shared/keytabs:ro
       - demo-shared-krb5:/shared/conf:ro
     ports:
@@ -43,6 +50,7 @@ services:
       CLUSTER_NAME: "Archive & Analytics DataLake"
     volumes:
       - ../sklad/hadoop/entrypoint.sh:/entrypoint.sh:ro
+      - hdfs-cluster-2-data:/data
       - demo-shared-keytabs:/shared/keytabs:ro
       - demo-shared-krb5:/shared/conf:ro
     ports:

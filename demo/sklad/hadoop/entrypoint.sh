@@ -138,11 +138,11 @@ cat <<EOF > "${HADOOP_CONF_DIR}/hdfs-site.xml"
 <configuration>
     <property>
         <name>dfs.namenode.name.dir</name>
-        <value>file:///opt/hadoop/dfs/name</value>
+        <value>file:///data/dfs/name</value>
     </property>
     <property>
         <name>dfs.datanode.data.dir</name>
-        <value>file:///opt/hadoop/dfs/data</value>
+        <value>file:///data/dfs/data</value>
     </property>
     <property>
         <name>dfs.replication</name>
@@ -231,11 +231,11 @@ cat <<EOF > "${HADOOP_CONF_DIR}/hdfs-site.xml"
 </configuration>
 EOF
 
-mkdir -p /opt/hadoop/dfs/name /opt/hadoop/dfs/data /opt/hadoop/logs
-chown -R hadoop:hadoop /opt/hadoop/dfs /opt/hadoop/logs "${HADOOP_CONF_DIR}"
+mkdir -p /data/dfs/name /data/dfs/data /opt/hadoop/logs
+chown -R hadoop:hadoop /data/dfs /opt/hadoop/logs "${HADOOP_CONF_DIR}"
 
 # Форматирование NameNode при необходимости
-if [ ! -d "/opt/hadoop/dfs/name/current" ]; then
+if [ ! -d "/data/dfs/name/current" ]; then
     echo "Форматирование HDFS NameNode..."
     su -s /bin/bash hadoop -c "/opt/hadoop/bin/hdfs namenode -format -force -nonInteractive"
 fi

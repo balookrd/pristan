@@ -4,8 +4,8 @@ include:
   - path: ../infra/docker-compose.infra.yml
 
 volumes:
-  sql-metastore-data:
-    name: sql-metastore-data
+  sql-metastore-1-data:
+    name: sql-metastore-1-data
   sql-metastore-2-data:
     name: sql-metastore-2-data
 
@@ -33,7 +33,7 @@ services:
       - ../tolmach/hive/yarn-site.xml:/opt/hive/custom-conf/yarn-site.xml:ro
       - demo-shared-keytabs:/etc/security/keytabs:ro
       - demo-shared-krb5:/shared/conf:ro
-      - sql-metastore-data:/opt/hive/data
+      - sql-metastore-1-data:/opt/hive/data
     depends_on:
       kdc:
         condition: service_healthy
